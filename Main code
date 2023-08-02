@@ -1,0 +1,471 @@
+# 
+#----------------------------------------------------------
+# ArcGIS Version:   Pro 1.0-2.x
+# Python Version:   3.6
+# Author: Ilyas Nursamsi
+# Last revision: 2/7/2022
+#-------------------------------------------------------------
+# 
+import arcpy
+import csv, sys, string, os, glob, numpy, arcgisscripting
+import time, math
+from arcpy import env
+from arcpy.sa import *
+arcpy.CheckOutExtension("Spatial")
+
+
+arcpy.env.overwriteOutput = True
+gp = arcgisscripting.create()
+
+def str2bool(pstr):
+    """Convert ESRI boolean string to Python boolean type"""
+    return pstr == 'true'
+	
+scriptPath = sys.path[0]
+points = sys.argv[1]
+SiteNames= sys.argv [2]
+inFriction = sys.argv [3]
+
+outNameF = sys.argv[4]
+outFolder = sys.argv[5]
+gridType= sys.argv[6]
+
+
+formulaIn=sys.argv[7]
+LCChighCUT=sys.argv[8]
+LCChighWT=sys.argv[11]
+LCCmidCUT=sys.argv[9]
+LCCmidWT=sys.argv[12]
+LCClowCUT=sys.argv[10]
+LCClowWT=sys.argv[13]
+
+#lcpLines = outFolder+ "/"+ outNameF + "LCPs.shp"
+#SR = arcpy.Describe(inFriction).SpatialReference
+#arcpy.DefineProjection_management(lcpLines, SR)
+gp.AddMessage("   ")
+gp.AddMessage("Step 1 (of 11): Setting up spatial environment")
+gp.AddMessage("   ")
+arcpy.CreateFolder_management(outFolder,"TEMP_ilUli")
+arcpy.CreateFolder_management(outFolder,"TEMP_ilUlii")
+arcpy.CreateFolder_management(outFolder,"TEMP_ilUliii")
+arcpy.CreateFolder_management(outFolder,"TEMP_ilUliiii")
+arcpy.CreateFolder_management(outFolder,"TEMP_ilUliiiii")
+arcpy.CreateFolder_management(outFolder,"TEMP_ilUlvi")
+arcpy.CreateFolder_management(outFolder,"TEMP_ilUlvii")
+arcpy.CreateFolder_management(outFolder,"TEMP_ilUlviii")
+outFolderTemp8 = outFolder + "/TEMP_ilUlviii"
+outFolderTemp7 = outFolder + "/TEMP_ilUlvii"
+outFolderTemp6 = outFolder + "/TEMP_ilUlvi"
+outFolderTemp= outFolder + "/TEMP_ilUli"
+outFolderTemp2= outFolder + "/TEMP_ilUlii"
+outFolderTemp3= outFolder + "/TEMP_ilUliii"
+outFolderTemp4= outFolder + "/TEMP_ilUliiii"
+outFolderTemp5= outFolder + "/TEMP_ilUliiiii"
+arcpy.CopyFeatures_management(points, outFolder+ "/points_unique_sites.shp")
+OutShape2 = outFolder + "/points_unique_sites.shp"
+relpath = os.path.dirname(sys.argv[0])
+gp.AddMessage(relpath)
+LCChighCUTV=(float(LCChighCUT)/100)
+LCChighWTV=int(LCChighWT)
+LCCmidCUTV=(float(LCCmidCUT)/100)
+LCCmidWTV=int(LCCmidWT)
+LCClowCUTV=(float(LCClowCUT)/100)
+LCClowWTV=int(LCClowWT)
+
+if gridType == "#":
+  gridTypeO = ".tif"
+  gridTypeO1="NO"
+if gridType == "TIFF (.tif)":
+    gridTypeO=".tif"
+    gridTypeO1="NO"
+if gridType == "ASCII (.asc)":
+    gridTypeO=".tif"
+    gridTypeO1="YES"
+if gridType == "Erdas Imagine (.img)":
+    gridTypeO=".img"
+    gridTypeO1="NO"
+
+
+#set up cell size and extent
+#arcpy.env.cellSize = inFriction
+#arcpy.env.mask = inFriction
+#arcpy.env.extent = inFriction
+#CELLV = arcpy.GetRasterProperties_management (inFriction,"CELLSIZEX")
+
+
+#removed duplicates based on lat and long
+arcpy.RepairGeometry_management(OutShape2,"DELETE_NULL")#this removes empty row
+arcpy.AddXY_management(OutShape2)
+LatLong="POINT_X;POINT_Y"
+arcpy.DeleteIdentical_management(OutShape2,LatLong,"#","0")
+
+
+gp = arcgisscripting.create(9.3)
+
+# need to have a Spatial Analyst extension
+try:
+    gp.CheckOutExtension("Spatial")
+except RuntimeError:
+    gp.AddError("You need to have a Spatial Analyst extension for this tool")
+    sys.exit(1) # end script process
+
+# allow files of same name to be overwritten
+gp.OverwriteOutput = 1
+
+
+# need to have a Spatial Analyst extension
+try:
+    gp.CheckOutExtension("Spatial")
+except RuntimeError:
+    gp.AddError("You need to have a Spatial Analyst extension for this tool")
+    sys.exit(1) # end script process
+
+# allow files of same name to be overwritten
+gp.OverwriteOutput = 1
+
+## ------------------------------------------
+# set arguments needing user specification
+## ------------------------------------------
+# set the analysis extent and cell size to that of the friction surface
+#sr= arcpy.Describe(inFriction).spatialReference
+#gp.Extent = arcpy.Describe(inFriction).Extent
+gp.Extent = gp.Describe(inFriction).Extent
+gp.CellSize = gp.Describe(inFriction).MeanCellHeight
+
+# create source grids for all input points
+gp.AddMessage("Creating source grids...")
+startTime = time.clock()
+
+gp.AddMessage("   ")
+gp.AddMessage("Step 2 (of 11): Create cost distance rasters for each site")
+gp.AddMessage("   ")
+gp.AddMessage("   Note: This is the slowest step. Occasionally the progress bar will disappear during this step. This does not mean that the analysis has ceased to function.  Check CPU progress if this is taking exceptionally long. If too long, resample your friction layer to a lower resolution.")
+
+# IN TEMP COOOOPPPPPYYY------XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+# creates cost distances for each locality
+## ------------------------------------------
+# create feature layer to selct from
+arcpy.MakeFeatureLayer_management(OutShape2,"fPoint")
+
+# select points in turn
+pointCount = int(arcpy.GetCount_management("fPoint")[0])
+for n in range(pointCount):
+    outRaster = (outFolderTemp3 + "/" + str(n) + ".tif").replace("\\","/")
+    outRaster1 = (outFolderTemp6 + "/" + str(n)+ ".img").replace("\\","/")
+    outRaster2 = (outFolderTemp6 + "/" + str(n)+ ".tif").replace("\\","/")
+    outRaster3 = (outFolderTemp7 + "/" + str(n)+ ".img").replace("\\","/")
+    arcpy.SelectLayerByAttribute_management("fPoint", "NEW_SELECTION", '"FID" = ' + str(n))
+
+    gp.AddMessage("Processising site " +str(n))
+    # convert to raster
+    arcpy.PointToRaster_conversion("fPoint",SiteNames, outRaster,"#","NONE",gp.CellSize)
+    arcpy.CalculateStatistics_management(outRaster,"1","1","#","SKIP_EXISTING","#")
+    RasMax= arcpy.GetRasterProperties_management(outRaster, "MAXIMUM")
+    #RasMaxV= int(str(RasMax))
+    RasMaxV= float(str(RasMax))
+    ReClassV="0 NODATA;"+str(RasMaxV)+" 1"
+    #gp.AddMessage("Reclassify settings: "+ReClassV)
+    arcpy.gp.Reclassify_sa(outRaster,"Value",ReClassV,outRaster2,"DATA")
+    arcpy.gp.CostDistance_sa(outRaster2,inFriction,outRaster1,"#",outRaster3)
+    
+
+# delete unwanted feature layer
+gp.delete_management("fPoint")
+
+endTime = time.clock()
+processTime = round((endTime - startTime), 2)
+gp.AddMessage("Source grids created in " + str(processTime) + " seconds")
+
+gp.AddMessage("   ")
+gp.AddMessage("Step 3 (of 11): Calculating LCCs and LCPs between each site pair")
+gp.AddMessage("   ")
+# start loop to work through the grids to calculate LCPs
+startTime = time.clock()
+# out TEMP COOOOPPPPPYYY----XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+
+#dataMatrixDic = {}
+theFilesB = glob.glob(outFolder + "/points_unique_sites.shp")
+for i in theFilesB:
+  inShp = str(i).replace("\\","/")
+  outName = os.path.split(inShp)[1]
+  outNameA = str(outName)[:-4]  
+  pointCount = int(arcpy.GetCount_management(inShp)[0])
+  line = 0 
+  # select points in turn
+  for sg in range(pointCount - 1): # -1 as last grid done as pair of other grids
+    # select end grids in turn 
+    for eg in range(sg + 1, pointCount): # +1 to avoid pair-wise repeats
+
+        # update progress point
+        gp.AddMessage("Calculating LCCs and LCPs between each site pair: " + str(line + 1) + " of " + str(((pointCount * pointCount) / 2) - (pointCount / 2)))
+
+        # calculate LCP grid
+        ###CalculateLCPs
+        In1Ras= (outFolderTemp6 + "/" + str(sg) + ".tif")
+        In2Ras= (outFolderTemp6 + "/" + str(eg) + ".img")
+        In3Ras=(outFolderTemp7 + "/" + str(eg) + ".img")
+        #In3Ras=(outFolderTemp7 + "/" + "hap" + outNameA + "_" + str(eg) + ".tif")
+        OutRas=(outFolderTemp3 + "/" + str(eg) + "_vs_" + str(sg) + ".tif")#11
+        outTIF= (outFolderTemp4 + "/" + str(eg) + "_vs_" + str(sg) + ".tif")  #9
+        outShp = (outFolderTemp4 + "/" + str(eg) + "_vs_" + str(sg) + ".shp") #11
+        TempShp= (outFolderTemp + "/tempPoint.shp")
+        #
+        arcpy.gp.Plus_sa(outFolderTemp6 + "/" + str(sg) + ".img",outFolderTemp6 + "/" + str(eg) + ".img", outFolderTemp4 + "/" + str(eg) + "_vs_" + str(sg) + ".img")
+        
+        arcpy.gp.CostPath_sa(In1Ras,In2Ras,In3Ras,OutRas,"EACH_CELL","Value")
+        arcpy.gp.Reclassify_sa(OutRas,"Value","0 NODATA;1 1;2 1;3 1",outTIF,"DATA") 
+        arcpy.RasterToPoint_conversion(outTIF,TempShp,"Value")
+        arcpy.gp.ExtractValuesToPoints_sa(TempShp,In2Ras,outShp,"NONE","VALUE_ONLY")
+        del TempShp
+        line = line + 1
+del eg
+del sg
+#del line
+#del pointCount
+
+
+endTime = time.clock()
+processTime = round((endTime - startTime), 2)
+gp.AddMessage("   ")
+gp.AddMessage("Converting points to cost distance rasters " + str(processTime) + " seconds")
+gp.AddMessage("   ")
+gp.AddMessage("Step 4 (of 11): Select and weight Least-Cost Corridors")
+gp.AddMessage("   ")
+# reclassify rasters 
+
+
+startTime = time.clock()
+theFilesA = glob.glob(outFolderTemp4 +"/*.img")
+
+if formulaIn== "Percentage of Cost Path Values":
+  for i in theFilesA:
+    inTIF = str(i).replace("\\","/")
+    outName = os.path.split(inTIF)[1] 
+    ReCLaOUT1 = (outFolderTemp5 + "/" + str(outName)[:-4]+ ".TIF").replace("\\","/")
+    gp.AddMessage("Reclassifying Rasters: ")
+  
+    try: 
+      arcpy.CalculateStatistics_management(inTIF,"1","1","#","SKIP_EXISTING","#")
+      RasMax= arcpy.GetRasterProperties_management(inTIF, "MAXIMUM")
+      RasMin= arcpy.GetRasterProperties_management(inTIF, "MINIMUM")
+      RasMaxV= float(str(RasMax))
+      RasMaxVP=float(RasMaxV + 1)
+      RasMinV= float(str(RasMin))
+      RasDiff=float(RasMaxV-RasMinV)
+      if RasDiff== 0:
+        gp.AddMessage("Skipping" + inTIF + "because it is not connected other populations" )
+      if RasDiff!= 0:
+        RasClass1=float((RasDiff * LCClowCUTV)+ RasMinV)
+        RasClass2=float((RasDiff * LCCmidCUTV)+ RasMinV)
+        RasClass3=float((RasDiff * LCChighCUTV) + RasMinV)
+        ReclassFields= ("0 " + str(RasClass1) + " "+ str(LCClowWTV)+ ";" +  str(RasClass1) + " " + str(RasClass2)  + " "+ str(LCCmidWTV)+ ";" +  str(RasClass2) + " " + str(RasClass3) + " "+ str(LCChighWTV)+ ";" + str(RasClass3) + " "+ str(RasMaxVP) +" 0")
+        gp.AddMessage("Reclassify Settings: " + ReclassFields)
+        arcpy.gp.Reclassify_sa(inTIF,"Value",ReclassFields,ReCLaOUT1,"DATA")
+    except: 
+      gp.AddMessage(gp.GetMessages())
+
+if formulaIn== "Percentage of LCP value (recommended)":  
+  for i in theFilesA:
+    inTIF = str(i).replace("\\","/")
+    outName = os.path.split(inTIF)[1] 
+    ReCLaOUT1 = (outFolderTemp5 + "/" + str(outName)[:-4]+ ".TIF").replace("\\","/")
+    gp.AddMessage("Reclassifying Rasters: ")
+  
+    try: 
+      arcpy.CalculateStatistics_management(inTIF,"1","1","#","SKIP_EXISTING","#")
+      RasMax= arcpy.GetRasterProperties_management(inTIF, "MAXIMUM")
+      RasMin= arcpy.GetRasterProperties_management(inTIF, "MINIMUM")
+      RasMaxV= float(str(RasMax))
+      RasMaxVP=float(RasMaxV + 1)
+      RasMinV= float(str(RasMin))
+      RasDiff=float(RasMaxV-RasMinV)
+      if RasDiff == 0:
+        gp.AddMessage("Skipping" + inTIF + "because it is not connected other populations" )
+      if RasDiff != 0:
+        RasClass1=float((RasMinV * LCClowCUTV)+ RasMinV)
+        RasClass2=float((RasMinV * LCCmidCUTV)+ RasMinV)
+        RasClass3=float((RasMinV * LCChighCUTV) + RasMinV)
+        ReclassFields= ("0 " + str(RasClass1) + " "+ str(LCClowWTV)+ ";" +  str(RasClass1) + " " + str(RasClass2)  + " "+ str(LCCmidWTV)+ ";" +  str(RasClass2) + " " + str(RasClass3) + " "+ str(LCChighWTV)+ ";" + str(RasClass3) + " "+ str(RasMaxVP) +" 0")
+        gp.AddMessage("Reclassify Settings: " + ReclassFields)
+        arcpy.gp.Reclassify_sa(inTIF,"Value",ReclassFields,ReCLaOUT1,"DATA")
+    except: 
+      pass
+      gp.AddMessage(gp.GetMessages())
+      
+endTime = time.clock()
+processTime = round((endTime - startTime), 2)
+gp.AddMessage("Reclassifying LCC in " + str(processTime) + " seconds")
+gp.AddMessage("   ")
+gp.AddMessage("Step 5 (of 11): Sum least-cost corridors to create LCC landscape")
+gp.AddMessage("   ")
+####-------------------Create a template so that rasters can be summed-------  
+arcpy.gp.Slice_sa(inFriction,outFolderTemp + "/" + "consTemp","1","EQUAL_INTERVAL","0")
+ConstRas1= outFolderTemp + "/" + "consTemp"
+arcpy.CopyRaster_management(ConstRas1,outFolderTemp +"/TEMP231B.tif","","","","","","32_BIT_FLOAT")
+arcpy.CopyRaster_management(ConstRas1,outFolderTemp +"/TEMP231C.tif","","","","","","#")
+outTempRas1 = outFolderTemp +"/TEMP231B.tif"
+outTempRas2 = outFolderTemp +"/TEMP231C.tif"
+gp.AddMessage("Summing Spatial Environment Established")
+
+###----------------Sum All Least-cost-corridor rasters--------------
+startTime = time.clock()
+theFilesD = glob.glob(outFolderTemp5 +"/*.TIF")
+for i in theFilesD:
+   inTIF = str(i).replace("\\","/")  
+   outName = os.path.split(inTIF)[1] 
+   outTempRas1 = outFolderTemp +"/TEMP231B.tif"
+   outTempRas2 = outFolderTemp +"/TEMP231C.tif"
+   try:
+      arcpy.gp.Plus_sa(inTIF,outTempRas1,outTempRas2)
+      arcpy.CopyRaster_management(outTempRas2,outTempRas1,"","","","","","")
+      print(outName, "successfully summed")
+      gp.AddMessage(outName + " successfully summed")
+   except:
+      print(outName + "...NOT SUMMED")
+      gp.AddMessage(outName + " ...NOT SUMMED")
+      gp.GetMessages()
+endTime = time.clock()
+processTime = round((endTime - startTime), 2)
+gp.AddMessage("Summing of LCCs " + str(processTime) + " seconds")
+
+gp.AddMessage("   ")
+gp.AddMessage("Step 6 (of 11): Saving LCC Landscape")
+gp.AddMessage("   ")
+#SAVE final Richness GRID
+outTempRas1 = (outFolderTemp +"/TEMP231B.tif").replace("\\","/")
+if gridTypeO1=="YES":
+     arcpy.RasterToASCII_conversion(outTempRas1,outFolder + "/" + outNameF + "_LCC_landscape.asc")
+if gridTypeO1=="NO":
+     arcpy.CopyRaster_management(outTempRas1,outFolder + "/" + outNameF + "_LCC_landscape"+ gridTypeO,"","","","","","")
+
+###Run LCPs in selected ###############################################  
+###STEP six
+startTime = time.clock()
+theFilesFZ = glob.glob(outFolderTemp4 +"/*.shp")
+gp.AddMessage("   ")
+gp.AddMessage("Step 7 (of 11): Converted LCP points from each site pair to a single line")
+gp.AddMessage("   ")
+for i in theFilesFZ:
+   inShp = str(i).replace("\\","/") 
+   outName = os.path.split(inShp)[1]
+   outNameA = str(outName)[:-4]
+   outShp = outFolderTemp5 + "/" + outNameA + ".shp"
+   try:
+        arcpy.PointsToLine_management(inShp,outShp,"GRID_CODE","RASTERVALU","NO_CLOSE")     
+        gp.AddMessage(outName + " successfully converted LCP points to a single line")
+   except:
+        gp.AddMessage(inShp + " ...NOT CONVERTED")
+        gp.GetMessages()
+del theFilesFZ
+endTime = time.clock()
+processTime = round((endTime - startTime), 2)
+gp.AddMessage("Summing of LCCs " + str(processTime) + " seconds")
+
+
+gp.AddMessage("   ")
+gp.AddMessage("Step 8 (of 11): Merge LCP lines to single file")
+gp.AddMessage("   ")
+
+theFilesFD = glob.glob(outFolderTemp5 +"/*.shp")
+outShpT1 = outFolderTemp + "/" + "tempT1.shp"
+InMergefilesA= str(theFilesFD).replace("\\","/")
+InMergefilesB= str(InMergefilesA).replace(",",";")
+InMergefilesC= str(InMergefilesB).replace("]","")
+InMergefilesD= str(InMergefilesC).replace("[","")
+InMergefiles= str(InMergefilesD).replace("'","")
+   
+arcpy.Merge_management(InMergefiles,outShpT1,"""#""")
+   
+arcpy.CopyFeatures_management(outShpT1, outFolder+ "/"+ outNameF +"_LCPs.shp")
+
+gp.AddMessage("   ")
+gp.AddMessage("Step 9 (of 11): Save final LCP lines file")
+gp.AddMessage("   ")
+
+
+cellV=arcpy.GetRasterProperties_management (inFriction, "CELLSIZEX")
+CellVn=(float(str(cellV))*5)
+CellVna=str(CellVn)
+CellVnb=float(str(cellV))
+arcpy.gp.LineDensity_sa(outFolder+ "/"+ outNameF +"_LCPs.shp","NONE",outFolder+ "/"+ outNameF +"_LCPs_Line_Density"+gridTypeO,CellVnb,CellVna,"SQUARE_MAP_UNITS")
+#####################################XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+ 
+gp.AddMessage("Finished successfully")
+
+gp.AddMessage("   ")
+gp.AddMessage("Step 10 (of 11): Adding results to ArcMap")
+gp.AddMessage("   ")
+p = arcpy.mp.ArcGISProject("CURRENT")
+m = p.listMaps()[0]
+
+#arcpy.ApplySymbologyFromLayer_management(outFolder + "\\" + outNameF + "_LCC_landscape"+ gridTypeO, scriptPath + "\\Scripts\\MaxEnt.lyrx")#dont exist
+#arcpy.ApplySymbologyFromLayer_management(outFolder + "\\" +  outNameF +"_LCPs_Line_Density"+gridTypeO, scriptPath + "\\Scripts\\MaxEnt.lyrx")#dont exist
+if gridTypeO1=="YES":
+   addLayer1 = m.addDataFromPath((outFolder + "\\" + outNameF + "_LCC_landscape.asc"))
+   addLayer3 = m.addDataFromPath((outFolder + "\\" +  outNameF +"_LCPs_Line_Density.asc"))
+if gridTypeO1=="NO":
+   addLayer1 = m.addDataFromPath((outFolder + "\\" + outNameF + "_LCC_landscape"+gridTypeO))
+   addLayer3 = m.addDataFromPath((outFolder + "\\" +  outNameF +"_LCPs_Line_Density"+gridTypeO))
+addLayer2 = m.addDataFromPath((outFolder + "\\" + outNameF + "_LCPs.shp"))
+
+
+m.addLayer(addLayer1, "AUTO_ARRANGE")
+m.addLayer(addLayer2, "AUTO_ARRANGE")
+m.addLayer(addLayer3, "AUTO_ARRANGE")
+#if gridTypeO1=="YES":
+#    
+#     arcpy.ApplySymbologyFromLayer_management(outNameF + "_LCC_landscape.asc",scriptPath + "\\Scripts\\MaxEnt.lyrx")
+#     arcpy.ApplySymbologyFromLayer_management(outNameF +"_LCPs_Line_Density"+gridTypeO,scriptPath + "\\Scripts\\MaxEnt.lyrx")
+#if gridTypeO1=="NO":
+#     arcpy.ApplySymbologyFromLayer_management(outFolder + "\\" + outNameF + "_LCC_landscape"+ gridTypeO,scriptPath + "\\Scripts\\MaxEnt.lyrx")
+#     arcpy.ApplySymbologyFromLayer_management(outFolder + "\\" + outNameF +"_LCPs_Line_Density"+gridTypeO,scriptPath + "\\Scripts\\MaxEnt.lyrx")
+###Deletes temporary files  
+gp.AddMessage("   ")
+gp.AddMessage("Step 11 (of 11): Cleaning up workspace")
+gp.AddMessage("   ")
+#theFiles = glob.glob(outFolderTemp4 +"/*")
+#for i in theFiles:
+#    inShp = str(i).replace("\\","/")
+#    try: 
+#      	arcpy.Delete_management(inShp)
+#    except: 
+#        print("")
+#theFiles = glob.glob(outFolderTemp2 +"/*.shp")
+#for i in theFiles:
+#    inShp = str(i).replace("\\","/")
+#    try: 
+#      	arcpy.Delete_management(inShp)
+#    except: 
+#        print ""
+
+#del theFiles
+arcpy.Delete_management(outFolder + "/points_unique_sites.shp")
+arcpy.Delete_management(outFolderTemp3)
+arcpy.Delete_management(outFolderTemp4)
+arcpy.Delete_management(outFolderTemp5)
+arcpy.Delete_management(outFolderTemp6)
+arcpy.Delete_management(outFolderTemp7)
+arcpy.Delete_management(outFolderTemp8)
+#arcpy.Delete_management(outFolderTemp9)
+#arcpy.Delete_management(outFolderTemp10)
+#outFolderTemp11 = outFolder + "/TEMP_ilUlxxi"
+#arcpy.Delete_management(outFolderTemp11)
+arcpy.Delete_management(outFolderTemp2)
+arcpy.Delete_management(outFolderTemp)
+gp.AddMessage("Finished successfully")
+del gp
+del arcpy, csv, sys, string, os, glob, numpy, arcgisscripting
+
+#import os
+#outFolderTemp= (outFolder + "/TEMP_ilUli")
+#outFolderTemp2= (outFolder + "/TEMP_ilUlii")
+#os.unlink(outFolderTemp)
+#os.unlink(outFolderTemp2)
+
+
+
+
+
+
+
+
